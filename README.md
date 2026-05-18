@@ -24,9 +24,28 @@ This repository contains two related artifacts that share the same OAuth-imperso
 > - Do not bill production workloads through it.
 > - After June 15, 2026, the legitimate path for subscription-backed programmatic use is the Agent SDK credit; this proxy is a learning exercise, not a replacement for that path.
 
-### Install
+### Quick start
 
-Clone and install dependencies:
+Five steps from cloning to forwarding requests.
+
+#### 1. Install Bun
+
+The project pins Bun 1.3.14 (see `mise.toml`). Install via one of:
+
+```bash
+# Recommended: mise (https://mise.jdx.dev)
+mise install
+
+# Or the official installer
+curl -fsSL https://bun.sh/install | bash
+
+# Or via npm
+npm install -g bun
+```
+
+Verify with `bun --version`.
+
+#### 2. Clone and install dependencies
 
 ```bash
 git clone https://github.com/ex-machina-co/opencode-anthropic-auth
@@ -34,35 +53,50 @@ cd opencode-anthropic-auth
 bun install
 ```
 
-Either run directly via `bun run proxy …` or build and use the `anthropic-auth-proxy` binary:
-
-```bash
-bun run build
-bun link
-anthropic-auth-proxy --help
-```
-
-### Login
+#### 3. Run the OAuth flow
 
 ```bash
 bun run proxy login
 ```
 
-This prints an Anthropic OAuth URL. Open it in your browser, authorize, and paste the resulting code (or the full callback URL) back into the terminal. Credentials are persisted to `$XDG_CONFIG_HOME/anthropic-auth-proxy/auth.json` (defaulting to `~/.config/anthropic-auth-proxy/auth.json`) with mode `0600`.
+The CLI prints an Anthropic authorization URL. Open it in your browser, complete the Anthropic login, then copy the code (or the full callback URL) from the redirect page and paste it back into the terminal. On success, credentials land at `~/.config/anthropic-auth-proxy/auth.json` with mode `0600` (or `$XDG_CONFIG_HOME/anthropic-auth-proxy/auth.json` if `XDG_CONFIG_HOME` is set).
 
-### Serve
+Confirm:
+
+```bash
+bun run proxy status
+# auth.json: /Users/you/.config/anthropic-auth-proxy/auth.json
+#   present:    yes
+#   mode:       0600
+#   valid_now:  yes
+```
+
+#### 4. Start the proxy
 
 ```bash
 bun run proxy serve
 # → Listening on http://127.0.0.1:3457 (auth.json: ~/.config/anthropic-auth-proxy/auth.json)
 ```
 
-Flags:
-- `--port <number>` — default `3457`
-- `--host <address>` — must be `127.0.0.1`, `::1`, or `localhost`; any other host is refused
-- `--verbose` — print per-request rewrite diagnostics to stderr
+Leave this running. Ctrl-C to stop.
 
-Point the official Python SDK at it with no modifications:
+#### 5. Send a request
+
+From a second terminal — anything that speaks Anthropic's API works.
+
+With `curl`:
+
+```bash
+curl -sS http://127.0.0.1:3457/v1/messages \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "claude-opus-4-6",
+    "max_tokens": 256,
+    "messages": [{"role": "user", "content": "say hi"}]
+  }'
+```
+
+With the official Python SDK (no modifications other than `base_url`):
 
 ```python
 from anthropic import Anthropic
@@ -75,25 +109,37 @@ resp = client.messages.create(
     max_tokens=1024,
     messages=[{"role": "user", "content": "Hello"}],
 )
+print(resp.content[0].text)
 ```
 
 Streaming (`stream=True`) is supported.
 
-### Status
+### Run as a global binary (optional)
+
+If you prefer `anthropic-auth-proxy …` over `bun run proxy …`:
 
 ```bash
-bun run proxy status
+bun run build       # compiles src/ → dist/, adds the shebang to dist/proxy/main.js
+bun link            # symlinks the binary into Bun's global bin directory
+anthropic-auth-proxy --help
 ```
 
-Prints presence/mode/expiry of `auth.json`. Never prints the token itself.
+After that the subcommands below work without the `bun run proxy` prefix.
 
-### Logout
+### Commands
 
-```bash
-bun run proxy logout
-```
+| Command | Purpose |
+|---|---|
+| `login` | Run the OAuth code-paste flow; persist credentials to `auth.json`. |
+| `serve` | Start the loopback HTTP proxy. Refuses non-loopback hosts. |
+| `status` | Print whether `auth.json` exists, its mode, and its expiry. Never prints the token. |
+| `logout` | Delete `auth.json` (with confirmation). Pass `--yes` to skip the prompt. |
 
-Removes `auth.json` (with confirmation). Pass `--yes` to skip the prompt.
+`serve` flags:
+
+- `--port <number>` — default `3457`
+- `--host <address>` — must be `127.0.0.1`, `::1`, or `localhost`
+- `--verbose` — emit per-request rewrite diagnostics to stderr (logs the rewritten body with tokens redacted; useful for studying what the transforms actually do to each request)
 
 ### Architecture
 
