@@ -1,6 +1,6 @@
 import type { Plugin } from '@opencode-ai/plugin'
 import { authorize, exchange } from './auth.ts'
-import { CLIENT_ID, TOKEN_URL } from './constants.ts'
+import { performTokenRefresh } from './refresh.ts'
 import {
   createStrippedStream,
   isInsecure,
@@ -49,89 +49,28 @@ export const AnthropicAuthPlugin: Plugin = async ({ client }) => {
               if (!auth.access || !auth.expires || auth.expires < Date.now()) {
                 if (!refreshPromise) {
                   refreshPromise = (async () => {
-                    const maxRetries = 2
-                    const baseDelayMs = 500
+                    const result = await performTokenRefresh(async () => {
+                      // Re-read auth to get the latest refresh token.
+                      // The outer `auth` snapshot may be stale if tokens
+                      // were rotated since the fetch() call was made.
+                      const freshAuth = await getAuth()
+                      return freshAuth.refresh
+                    })
 
-                    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-                      try {
-                        if (attempt > 0) {
-                          const delay = baseDelayMs * 2 ** (attempt - 1)
-                          await new Promise((resolve) =>
-                            setTimeout(resolve, delay),
-                          )
-                        }
+                    // biome-ignore lint/suspicious/noExplicitAny: SDK types don't expose auth.set
+                    await (client as any).auth.set({
+                      path: {
+                        id: 'anthropic',
+                      },
+                      body: {
+                        type: 'oauth',
+                        refresh: result.refresh,
+                        access: result.access,
+                        expires: result.expires,
+                      },
+                    })
 
-                        // Re-read auth to get the latest refresh token.
-                        // The outer `auth` snapshot may be stale if tokens
-                        // were rotated since the fetch() call was made.
-                        const freshAuth = await getAuth()
-
-                        const response = await fetch(TOKEN_URL, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            Accept: 'application/json, text/plain, */*',
-                            'User-Agent': 'axios/1.13.6',
-                          },
-                          body: JSON.stringify({
-                            grant_type: 'refresh_token',
-                            refresh_token: freshAuth.refresh,
-                            client_id: CLIENT_ID,
-                          }),
-                        })
-
-                        if (!response.ok) {
-                          if (response.status >= 500 && attempt < maxRetries) {
-                            await response.body?.cancel()
-                            continue
-                          }
-
-                          const body = await response.text().catch(() => '')
-                          throw new Error(
-                            `Token refresh failed: ${response.status} — ${body}`,
-                          )
-                        }
-
-                        const json = (await response.json()) as {
-                          refresh_token: string
-                          access_token: string
-                          expires_in: number
-                        }
-
-                        // biome-ignore lint/suspicious/noExplicitAny: SDK types don't expose auth.set
-                        await (client as any).auth.set({
-                          path: {
-                            id: 'anthropic',
-                          },
-                          body: {
-                            type: 'oauth',
-                            refresh: json.refresh_token,
-                            access: json.access_token,
-                            expires: Date.now() + json.expires_in * 1000,
-                          },
-                        })
-
-                        return json.access_token
-                      } catch (error) {
-                        const isNetworkError =
-                          error instanceof Error &&
-                          (error.message.includes('fetch failed') ||
-                            ('code' in error &&
-                              (error.code === 'ECONNRESET' ||
-                                error.code === 'ECONNREFUSED' ||
-                                error.code === 'ETIMEDOUT' ||
-                                error.code === 'UND_ERR_CONNECT_TIMEOUT')))
-
-                        if (attempt < maxRetries && isNetworkError) {
-                          continue
-                        }
-
-                        throw error
-                      }
-                    }
-                    // Unreachable — each iteration either returns or throws.
-                    // Kept as a TypeScript exhaustiveness guard.
-                    throw new Error('Token refresh exhausted all retries')
+                    return result.access
                   })().finally(() => {
                     refreshPromise = null
                   })

@@ -1,14 +1,145 @@
-# OpenCode Anthropic Auth Plugin
+# Anthropic Auth Proxy / OpenCode Anthropic Auth Plugin
+
+This repository contains two related artifacts that share the same OAuth-impersonation transform layer (`src/auth.ts`, `src/transform.ts`, `src/refresh.ts`, `src/constants.ts`, `src/cch.ts`):
+
+1. **`@ex-machina/opencode-anthropic-auth`** — an [OpenCode](https://github.com/anomalyco/opencode) plugin that lets Claude Pro/Max subscribers use their existing subscription inside OpenCode. See [Plugin usage](#plugin-usage) below.
+2. **`anthropic-auth-proxy`** — a local HTTP proxy (loopback only) that accepts standard Anthropic API requests and routes them through the same OAuth-impersonation pattern. Intended as a **learning project**. See [Proxy usage](#proxy-usage) below.
 
 > [!WARNING]
-> This plugin comes with no guarantees. You might be banned for breaking the TOS, you might not be. I don't work at Anthropic, nor am I an attorney.
+> Both artifacts come with no guarantees. You may be banned for breaking Anthropic's terms; I don't work at Anthropic, nor am I an attorney.
 >
-> Use your best judgment and don't try to abuse the subscriptions. Plugins like oh-my-openagent are _known_ to trigger bans. Please be careful when using Ralph loops or insanely heavy usage patterns.
+> Use your best judgment and don't try to abuse the subscriptions. Ralph loops or unusually heavy usage patterns are well-known triggers for account suspensions.
 
 > [!IMPORTANT]
-> If you are seeing issues, please try to `rm -rf ~/.cache/opencode` and check your `opencode.json` config to make sure you're on the latest version.
+> Plugin troubleshooting: try `rm -rf ~/.cache/opencode` and verify the version pinned in your `opencode.json` first.
+
+## Proxy usage
+
+> [!CAUTION]
+> **Learning project. Not for production. Not for shared use.**
 >
-> Try this FIRST before making an Issue. Thanks!
+> This proxy applies OAuth-impersonation patterns to bill Anthropic API traffic against a Pro/Max subscription. It likely violates Anthropic's consumer terms when used to bill third-party traffic against a subscription. The implementation is for personal study only:
+> - Do not share OAuth tokens.
+> - Do not bind to anything other than loopback.
+> - Do not bill production workloads through it.
+> - After June 15, 2026, the legitimate path for subscription-backed programmatic use is the Agent SDK credit; this proxy is a learning exercise, not a replacement for that path.
+
+### Install
+
+Clone and install dependencies:
+
+```bash
+git clone https://github.com/ex-machina-co/opencode-anthropic-auth
+cd opencode-anthropic-auth
+bun install
+```
+
+Either run directly via `bun run proxy …` or build and use the `anthropic-auth-proxy` binary:
+
+```bash
+bun run build
+bun link
+anthropic-auth-proxy --help
+```
+
+### Login
+
+```bash
+bun run proxy login
+```
+
+This prints an Anthropic OAuth URL. Open it in your browser, authorize, and paste the resulting code (or the full callback URL) back into the terminal. Credentials are persisted to `$XDG_CONFIG_HOME/anthropic-auth-proxy/auth.json` (defaulting to `~/.config/anthropic-auth-proxy/auth.json`) with mode `0600`.
+
+### Serve
+
+```bash
+bun run proxy serve
+# → Listening on http://127.0.0.1:3457 (auth.json: ~/.config/anthropic-auth-proxy/auth.json)
+```
+
+Flags:
+- `--port <number>` — default `3457`
+- `--host <address>` — must be `127.0.0.1`, `::1`, or `localhost`; any other host is refused
+- `--verbose` — print per-request rewrite diagnostics to stderr
+
+Point the official Python SDK at it with no modifications:
+
+```python
+from anthropic import Anthropic
+client = Anthropic(
+    api_key="ignored-by-proxy",
+    base_url="http://127.0.0.1:3457",
+)
+resp = client.messages.create(
+    model="claude-opus-4-6",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello"}],
+)
+```
+
+Streaming (`stream=True`) is supported.
+
+### Status
+
+```bash
+bun run proxy status
+```
+
+Prints presence/mode/expiry of `auth.json`. Never prints the token itself.
+
+### Logout
+
+```bash
+bun run proxy logout
+```
+
+Removes `auth.json` (with confirmation). Pass `--yes` to skip the prompt.
+
+### Architecture
+
+```
+client (anthropic SDK)  ──HTTP──▶  proxy (127.0.0.1:3457)  ──HTTPS──▶  api.anthropic.com
+                                          │
+                                  ┌───────┴────────┐
+                                  │ intercept/     │  ← shared with the OpenCode plugin
+                                  │   transform.ts │  ← prepends Claude Code identity,
+                                  │   refresh.ts   │     prefixes mcp_ tools, injects
+                                  │   constants.ts │     billing fingerprint, manages
+                                  │   ...          │     OAuth tokens
+                                  └────────────────┘
+                                          │
+                                  ┌───────┴────────┐
+                                  │ ~/.config/     │
+                                  │  anthropic-    │
+                                  │  auth-proxy/   │
+                                  │  auth.json     │
+                                  └────────────────┘
+```
+
+The transform layer is the same code OpenCode runs in-process; the proxy is a thin shell that adapts it to an HTTP socket and a file-backed token store. The proxy never modifies the intercept code — pulling upstream transform changes is `git pull` plus running the test suite.
+
+### Known limitations
+
+- **SSE chunk-boundary tool-name rewriting** is per-chunk (inherited from upstream `createStrippedStream`). The regex requires the entire `"name":"mcp_…"` JSON span to land in a single decoded chunk; if a chunk boundary falls inside that span — even one byte off — the strip silently misses the tool name and the client receives a `mcp_`-prefixed name it doesn't recognize. Anthropic's SSE chunking has so far kept these spans intact in practice, but a different proxy in the path, a constrained TCP window, or unusually small chunk sizes can surface this. Documented as a real bug rather than fixed because doing so requires buffering until `\n\n` SSE event boundaries.
+- **Forced Claude Code identity block.** Every outbound request has a `"You are a Claude agent, built on Anthropic's Claude Agent SDK."` system block prepended whether you asked for it or not. This is required by Anthropic's classifier; the proxy doesn't expose a way to disable it.
+- **Silent prompt rewriting.** Paragraphs containing OpenCode-identifying URLs and short branded strings are removed from your system prompt before it reaches Anthropic. See `src/constants.ts` (`PARAGRAPH_REMOVAL_ANCHORS`, `TEXT_REPLACEMENTS`) for the full list. The annotations there explain the bisection methodology used to isolate each filter.
+- **No authentication on the proxy endpoint.** Loopback-only is the security boundary. Do not bind to a non-loopback interface.
+- **No multi-account support.** One `auth.json`, one Anthropic identity at a time.
+- **No retry beyond token refresh.** Anthropic's response is the source of truth — including 429/5xx.
+- **Token refresh races other processes that share `auth.json`.** Inflight dedup prevents the proxy from racing itself, but if you run the OpenCode plugin and the proxy against the same `auth.json` at once, they can each rotate the refresh token. Pick one or the other per machine.
+
+### When this proxy stops working
+
+It will. Anthropic ships classifier updates without notice. When that happens:
+
+1. Check the upstream commits in `ex-machina-co/opencode-anthropic-auth` for a recent fix.
+2. If there's a fix, `git pull` and run the tests — the proxy code shouldn't need to change.
+3. If there's no fix yet, you've found a fresh classifier change in the wild. The bisection methodology documented in `src/constants.ts` is the playbook.
+4. If you've been broken for more than a week with no upstream fix, the pattern may be dead. Anthropic may have shipped a detection that can't be defeated without genuine Claude Code binary attestation. That outcome is also informative.
+
+The proxy is built to survive an unreachable Anthropic — `serve` and `status` still work, only the actual request forwarding fails. Anthropic errors are surfaced as 4xx/5xx with the upstream response body intact so debugging is possible.
+
+## Plugin usage
 
 An [OpenCode](https://github.com/anomalyco/opencode) plugin that provides Anthropic OAuth authentication, enabling Claude Pro/Max users to use their subscription directly with OpenCode.
 
