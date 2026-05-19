@@ -90,7 +90,7 @@ With `curl`:
 curl -sS http://127.0.0.1:3457/v1/messages \
   -H 'content-type: application/json' \
   -d '{
-    "model": "claude-opus-4-6",
+    "model": "claude-opus-4-7",
     "max_tokens": 256,
     "messages": [{"role": "user", "content": "say hi"}]
   }'
@@ -105,7 +105,7 @@ client = Anthropic(
     base_url="http://127.0.0.1:3457",
 )
 resp = client.messages.create(
-    model="claude-opus-4-6",
+    model="claude-opus-4-7",
     max_tokens=1024,
     messages=[{"role": "user", "content": "Hello"}],
 )
