@@ -1,7 +1,7 @@
 # Anthropic Auth Proxy / OpenCode Anthropic Auth Plugin
 
 > [!NOTE]
-> Originally forked from [ex-machina-co/opencode-anthropic-auth](https://github.com/ex-machina-co/opencode-anthropic-auth). The `anthropic-auth-proxy` CLI is added in this fork; the OpenCode plugin and shared transform layer are upstream work. See `LICENSE` for full attribution.
+> Originally forked from [ex-machina-co/opencode-anthropic-auth](https://github.com/ex-machina-co/opencode-anthropic-auth). The OpenCode plugin and the OAuth-impersonation transform layer (`src/auth.ts`, `src/transform.ts`, `src/constants.ts`, `src/cch.ts`) are upstream work. The `anthropic-auth-proxy` local HTTP proxy — everything under `src/proxy/`, plus `src/refresh.ts` extracted as a shared module — is added in this fork. See `LICENSE` for full attribution.
 
 This repository contains two related artifacts that share the same OAuth-impersonation transform layer (`src/auth.ts`, `src/transform.ts`, `src/refresh.ts`, `src/constants.ts`, `src/cch.ts`):
 
