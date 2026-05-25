@@ -1,5 +1,8 @@
 # Anthropic Auth Proxy / OpenCode Anthropic Auth Plugin
 
+> [!NOTE]
+> Originally forked from [ex-machina-co/opencode-anthropic-auth](https://github.com/ex-machina-co/opencode-anthropic-auth). The `anthropic-auth-proxy` CLI is added in this fork; the OpenCode plugin and shared transform layer are upstream work. See `LICENSE` for full attribution.
+
 This repository contains two related artifacts that share the same OAuth-impersonation transform layer (`src/auth.ts`, `src/transform.ts`, `src/refresh.ts`, `src/constants.ts`, `src/cch.ts`):
 
 1. **`@ex-machina/opencode-anthropic-auth`** — an [OpenCode](https://github.com/anomalyco/opencode) plugin that lets Claude Pro/Max subscribers use their existing subscription inside OpenCode. See [Plugin usage](#plugin-usage) below.
@@ -48,8 +51,8 @@ Verify with `bun --version`.
 #### 2. Clone and install dependencies
 
 ```bash
-git clone https://github.com/ex-machina-co/opencode-anthropic-auth
-cd opencode-anthropic-auth
+git clone https://github.com/ryan-yuuu/claude-auth-proxy
+cd claude-auth-proxy
 bun install
 ```
 
