@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
   "changelog": [
     "@changesets/changelog-github",
-    { "repo": "ex-machina-co/opencode-anthropic-auth" }
+    { "repo": "ryan-yuuu/claude-auth-proxy" }
   ],
   "commit": false,
   "fixed": [],
